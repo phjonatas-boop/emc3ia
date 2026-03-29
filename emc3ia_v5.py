@@ -228,7 +228,196 @@ def texto_viral(tema, frases=None):
     arq  = os.path.join(PASTA, "textos", f"EMC3_{nome}.txt")
     with open(arq, "w", encoding="utf-8") as f:
         f.write(resultado)
-< truncated lines 231-420 >
+    return resultado
+
+
+def transcrever_audio(url_midia):
+    try:
+        arq_ogg = os.path.join(PASTA, "audio", "wpp.ogg")
+        arq_wav = os.path.join(PASTA, "audio", "wpp.wav")
+        res = requests.get(
+            url_midia,
+            auth=(TWILIO_SID, TWILIO_TOKEN),
+            timeout=30, stream=True
+        )
+        with open(arq_ogg, "wb") as f:
+            for chunk in res.iter_content(8192):
+                f.write(chunk)
+        os.system(
+            f'ffmpeg -y -i "{arq_ogg}" '
+            f'-acodec pcm_s16le -ar 16000 -ac 1 "{arq_wav}" 2>/dev/null'
+        )
+        if not os.path.exists(arq_wav):
+            return None
+        import speech_recognition as sr
+        rec = sr.Recognizer()
+        rec.energy_threshold         = 200
+        rec.dynamic_energy_threshold = True
+        rec.pause_threshold          = 0.8
+        with sr.AudioFile(arq_wav) as src:
+            rec.adjust_for_ambient_noise(src, duration=0.3)
+            audio = rec.record(src)
+        return rec.recognize_google(audio, language="pt-BR")
+    except Exception as e:
+        print(f"[ERRO AUDIO] {e}")
+        return None
+
+
+APPS = {
+    "whatsapp":      "com.whatsapp",
+    "tiktok":        "com.zhiliaoapp.musically",
+    "instagram":     "com.instagram.android",
+    "youtube":       "com.google.android.youtube",
+    "chrome":        "com.android.chrome",
+    "galeria":       "com.google.android.apps.photos",
+    "maps":          "com.google.android.apps.maps",
+    "spotify":       "com.spotify.music",
+    "netflix":       "com.netflix.mediaclient",
+    "facebook":      "com.facebook.katana",
+    "telegram":      "org.telegram.messenger",
+    "calculadora":   "com.android.calculator2",
+    "configuracoes": "com.android.settings",
+    "clash royale":  "com.supercell.clashroyale",
+    "free fire":     "com.dts.freefireth",
+    "gmail":         "com.google.android.gm",
+}
+
+
+def abrir_app(nome, para):
+    pkg = None
+    for chave, pacote in APPS.items():
+        if chave in nome.lower():
+            pkg = pacote
+            break
+    if pkg:
+        sh(f'monkey -p {pkg} -c android.intent.category.LAUNCHER 1')
+        enviar(para, f"Abrindo {nome}!")
+    else:
+        enviar(para, f"Nao conheco o app: {nome}. Me diz o nome exato!")
+
+
+def ver_bateria(para):
+    try:
+        info = subprocess.run(
+            ["termux-battery-status"],
+            capture_output=True, text=True, timeout=5
+        ).stdout
+        d      = json.loads(info)
+        nivel  = d.get("percentage", "?")
+        plug   = d.get("plugged", "UNPLUGGED")
+        status = "Carregando" if plug != "UNPLUGGED" else "Descarregando"
+        enviar(para, f"Bateria: {nivel}%\nStatus: {status}")
+    except Exception as e:
+        enviar(para, f"Erro ao ver bateria: {e}")
+
+
+def lanterna(acao, para):
+    if any(p in acao for p in ["liga", "on", "acend"]):
+        sh("termux-torch on")
+        enviar(para, "Lanterna ligada!")
+    else:
+        sh("termux-torch off")
+        enviar(para, "Lanterna desligada!")
+
+
+def controlar_volume(acao, para):
+    if any(p in acao for p in ["aumenta", "sobe", "mais"]):
+        sh("termux-volume music 15")
+        enviar(para, "Volume aumentado!")
+    elif any(p in acao for p in ["diminui", "baixa", "menos"]):
+        sh("termux-volume music 3")
+        enviar(para, "Volume diminuido!")
+    else:
+        sh("termux-volume music 0")
+        enviar(para, "Volume no mudo!")
+
+
+def ver_localizacao(para):
+    try:
+        enviar(para, "Buscando localizacao...")
+        info = subprocess.run(
+            ["termux-location"],
+            capture_output=True, text=True, timeout=15
+        ).stdout
+        d   = json.loads(info)
+        lat = d.get("latitude", "?")
+        lon = d.get("longitude", "?")
+        enviar(para,
+            f"Sua localizacao:\nLat: {lat}\nLon: {lon}\n"
+            f"https://maps.google.com/?q={lat},{lon}"
+        )
+    except Exception as e:
+        enviar(para, f"Erro ao localizar: {e}")
+
+
+def tirar_foto(para):
+    arq = os.path.join(PASTA, "audio", "foto.jpg")
+    sh(f'termux-camera-photo "{arq}"')
+    time.sleep(3)
+    if os.path.exists(arq) and os.path.getsize(arq) > 1000:
+        enviar_arquivo(para, arq, "Foto tirada!")
+    else:
+        enviar(para, "Nao consegui tirar foto.")
+
+
+def criar_alarme(texto, para):
+    m = re.search(r'(\d{1,2})[h:]\s*(\d{0,2})', texto.lower())
+    if m:
+        h  = m.group(1).zfill(2)
+        mi = (m.group(2) or "00").zfill(2)
+        sh(f'termux-notification --title "Alarme EMC3 IA" --content "{h}:{mi}"')
+        enviar(para, f"Alarme configurado para {h}:{mi}!")
+    else:
+        enviar(para, "Qual horario? Ex: alarme as 7:30")
+
+
+def _video_task(tema, formato, estilo, para):
+    if fila.cancelado():
+        enviar(para, "Tarefa cancelada.")
+        return
+    estilos = {
+        "espiritual":   "estilo Neville Goddard, espiritual, transcendente",
+        "motivacional": "estilo motivacional, energia alta, conquista",
+        "educativo":    "estilo educativo, informativo, surpreendente",
+        "humor":        "estilo humoristico, engracado e viral",
+    }
+    desc    = estilos.get(estilo, estilos["motivacional"])
+    roteiro = gemini(
+        f"Crie 8 frases impactantes sobre: {tema}. "
+        f"Estilo: {desc}. Maximo 7 palavras cada. "
+        "Retorne SOMENTE as frases, uma por linha."
+    )
+    frases = [l.strip() for l in roteiro.split("\n")
+              if l.strip() and len(l.strip()) > 3][:8]
+    if fila.cancelado():
+        enviar(para, "Tarefa cancelada.")
+        return
+    arq_voz = os.path.join(PASTA, "audio", "voz.mp3")
+    gerar_voz(" ... ".join(frases), arq_voz)
+    res_map   = {"vertical": "1080x1920", "quadrado": "1080x1080", "horizontal": "1920x1080"}
+    res       = res_map.get(formato, "1080x1920")
+    w, h      = res.split("x")
+    palavras  = gemini(
+        f"8 palavras-chave em ingles para videos sobre: {tema}. Uma por linha."
+    ).split("\n")[:8]
+    videos_bg = baixar_pexels(palavras, len(frases))
+    dur_total = duracao(arq_voz)
+    dur_frase = max(dur_total / max(len(frases), 1), 2.5)
+    clipes    = []
+    for i, (frase, bg) in enumerate(zip(frases, videos_bg)):
+        if fila.cancelado():
+            enviar(para, "Tarefa cancelada.")
+            return
+        saida  = os.path.join(PASTA, f"clipe_{i:02d}.mp4")
+        fs     = (frase.replace("'", "\u2019")
+                       .replace(":", "\\:")
+                       .replace("%", "\\%")
+                       .replace('"', ""))
+        fade   = 0.3
+        filtro = (
+            f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},setsar=1,"
+            f"colorchannelmixer=rr=0.5:gg=0.5:bb=0.5,"
             f"drawtext=text='{fs}':"
             f"fontcolor=white:fontsize=70:"
             f"x=(w-text_w)/2:y=(h-text_h)/2:"
@@ -388,73 +577,4 @@ def processar(de, corpo, tipo, url_m, n_mid):
         tirar_foto(de)
         return
 
-    if any(p in c for p in ["abre ", "abrir ", "abra "]):
-        nome = gemini(f"Qual app o usuario quer abrir: {corpo}. Responda apenas o nome do app.")
-        abrir_app(nome.strip(), de)
-        return
-
-    if any(p in c for p in ["alarme", "acorda", "lembrete"]):
-        criar_alarme(c, de)
-        return
-
-    if "youtube.com" in c or "youtu.be" in c:
-        m = re.search(r'https?://\S+', corpo)
-        if m:
-            n  = 5
-            mn = re.search(r'(\d+)\s*cortes?', c)
-            if mn: n = min(int(mn.group(1)), 10)
-            enviar(de, f"Cortes enfileirados! {n} cortes.")
-            fila.add(f"Cortes ({n})", _cortes_task, (m.group(), n, de))
-        return
-
-    if any(p in c for p in ["oi", "ola", "menu", "ajuda", "help", "emc", "inicio"]):
-        enviar(de,
-            "EMC3 IA v5.0\n\n"
-            "VIDEO:\ncria video sobre [tema]\n\n"
-            "CORTES:\nCole link do YouTube\n\n"
-            "TEXTO:\ntexto viral sobre [tema]\n\n"
-            "CELULAR:\nabre whatsapp\nabre tiktok\n"
-            "bateria\nliga lanterna\ndesliga lanterna\n"
-            "aumenta volume\ndiminui volume\n"
-            "minha localizacao\ntira foto\n"
-            "alarme as 7:30\n\n"
-            "CONTROLE:\nstatus\ncancelar"
-        )
-        return
-
-    if any(p in c for p in ["video", "cria", "gera", "viral", "reels", "shorts"]):
-        tema   = gemini(f"Extraia o tema em 3-5 palavras: {corpo}")
-        estilo = "motivacional"
-        if any(p in c for p in ["espirit", "neville", "universo"]):
-            estilo = "espiritual"
-        elif any(p in c for p in ["educa", "dica", "como"]):
-            estilo = "educativo"
-        elif any(p in c for p in ["humor", "engraca"]):
-            estilo = "humor"
-        formato = "quadrado" if "quadrad" in c else "vertical"
-        enviar(de, f"Video enfileirado!\nTema: {tema}\nEstilo: {estilo}")
-        fila.add(f"Video: {tema}", _video_task, (tema.strip(), formato, estilo, de))
-        return
-
-    if any(p in c for p in ["texto", "hashtag", "caption"]):
-        tema = gemini(f"Extraia o tema em 3-5 palavras: {corpo}")
-        enviar(de, "Gerando texto viral...")
-        txt = texto_viral(tema.strip())
-        enviar(de, f"Texto pronto:\n\n{txt[:1400]}")
-        return
-
-    resp = gemini(corpo,
-        system=(
-            "Voce e EMC3 IA, assistente viral brasileiro. "
-            "Responda em portugues, curto e animado."
-        )
-    )
-    enviar(de, resp[:1500])
-
-
-if __name__ == "__main__":
-    print("EMC3 IA v5.0 pronto!")
-    print(f"Pasta: {PASTA}")
-    print(f"URL:   {TUNNEL_URL}")
-    print(f"Porta: {PORT}")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    if any(p in c for p 
